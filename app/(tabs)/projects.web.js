@@ -118,14 +118,14 @@ export default function Projects() {
       </Text>
 
       {/* Modo de vista + Crear rápida (ligeramente más grande) */}
-      <View className="flex-row gap-3 mb-3">
+      <View className="flex-row flex-wrap gap-3 mb-3">
         {["table", "kanban", "list"].map((m) => (
           <TouchableOpacity
             key={m}
             onPress={() => setModo(m)}
             className={`px-4 py-3 rounded-2xl ${modo === m ? "bg-black" : "bg-gray-200"}`}
           >
-            <Text className={`${modo === m ? "text-white" : "text-black"} text-base`}>
+            <Text className={`${modo === m ? "text-white" : "text-black"} text-xs sm:text-base lg:text-lg`}>
               {m === "table" ? "Tabla" : m === "kanban" ? "Tablero" : "Lista"}
             </Text>
           </TouchableOpacity>
@@ -135,7 +135,7 @@ export default function Projects() {
           disabled={!project}
           className={`px-4 py-3 rounded-2xl ${project ? "bg-emerald-600" : "bg-emerald-300"}`}
         >
-          <Text className="text-white text-base">+ Tarea</Text>
+          <Text className="text-white text-xs sm:text-base lg:text-lg">+ Tarea</Text>
         </TouchableOpacity>
       </View>
 
