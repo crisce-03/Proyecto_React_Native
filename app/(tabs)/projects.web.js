@@ -1,14 +1,14 @@
-// app/tabs/projects.js  (o app/(tabs)/projects.js)
+// app/tabs/projects.js
 import { useEffect, useMemo, useState } from "react";
 import { View, Text, TouchableOpacity, ScrollView } from "react-native";
 import { useApp } from "../../contexts/AppProvider";
 import SearchBar from "../../components/SearchBar";
-import KanbanColumn from "../../components/KanbanColum";  // tu archivo actual
+import KanbanColumn from "../../components/KanbanColum";
 import TaskCard from "../../components/TaskCard";
 import TaskTable from "../../components/TaskTable";
+import DueDateModal from "../../components/DueDateModal";
+import CommentsModal from "../../components/CommentsModal";
 import "../../global.css";
-
-const STATES = ["all", "todo", "in_progress", "done", "late"];
 
 export default function Projects() {
   const {
@@ -18,99 +18,126 @@ export default function Projects() {
     createTask,
     updateTask,
     removeTask,
+    addComment, // si no existe en tu store, ignora o ajusta la llamada de submitComment
   } = useApp();
 
-  const [mode, setMode] = useState("table"); // 👉 arranca en tabla
-  const [filter, setFilter] = useState("all");
+  const [modo, setModo] = useState("table"); // "table" | "kanban" | "list"
   const [q, setQ] = useState("");
 
-  // Boot mínimo (aseguramos 1 workspace/proyecto)
+  // Modal de fecha
+  const [dateModalOpen, setDateModalOpen] = useState(false);
+  const [dateTemp, setDateTemp] = useState(new Date());
+  const [selectedTask, setSelectedTask] = useState(null);
+
+  // Modal de comentarios
+  const [commentsOpen, setCommentsOpen] = useState(false);
+
   useEffect(() => {
-    if (!state.workspaces.length) { createWorkspace("Team Space"); return; }
+    if (!state.workspaces.length) {
+      createWorkspace("Team Space");
+      return;
+    }
     const ws0 = state.workspaces[0];
-    const hasProject = state.projects.some(p => p.workspaceId === ws0.id);
-    if (!hasProject) createProject(ws0.id, "Project 1");
+    const hasProject = state.projects.some((p) => p.workspaceId === ws0.id);
+    if (!hasProject) createProject(ws0.id, "Proyecto 1");
   }, [state.workspaces.length, state.projects.length]);
 
   const ws = state.workspaces[0];
-  const project = state.projects.find(p => p.workspaceId === ws?.id);
+  const project = state.projects.find((p) => p.workspaceId === ws?.id);
 
-  // Datos tabulares
   const members = ws?.members ?? [];
-
   const tasks = useMemo(() => {
     if (!project) return [];
-    let arr = state.tasks.filter(t => t.projectId === project.id)
-      .map(t => ({
+    let arr = state.tasks
+      .filter((t) => t.projectId === project.id)
+      .map((t) => ({
         ...t,
-        _commentsCount: state.comments.filter(c => c.taskId === t.id).length,
+        _commentsCount: state.comments.filter((c) => c.taskId === t.id).length,
       }));
-    if (filter !== "all") arr = arr.filter(t => t.state === filter);
     if (q) {
       const needle = q.toLowerCase();
-      arr = arr.filter(t => t.title.toLowerCase().includes(needle) || t.id.includes(q));
+      arr = arr.filter(
+        (t) => t.title.toLowerCase().includes(needle) || t.id.includes(q)
+      );
     }
     return arr;
-  }, [state.tasks, state.comments, project?.id, filter, q]);
+  }, [state.tasks, state.comments, project?.id, q]);
 
-  const createQuick = (title = "Nueva tarea") => {
+  const crearRapida = (titulo = "Nueva tarea") => {
     if (!project) return;
-    createTask(project.id, title);
+    createTask(project.id, titulo);
   };
 
-  const nextState = (s) =>
+  // Estado y prioridad
+  const cicloEstado = (s) =>
     s === "todo" ? "in_progress" :
     s === "in_progress" ? "done" :
     s === "done" ? "late" : "todo";
 
-  const toggleTask = (t) => updateTask(t.id, { state: nextState(t.state) });
-  const move = (t, to) => updateTask(t.id, { state: to });
+  const cicloPrioridad = (p) =>
+    p === "low" ? "medium" :
+    p === "medium" ? "high" :
+    p === "high" ? "urgent" : "low";
+
+  const cambiarEstado = (t) => updateTask(t.id, { state: cicloEstado(t.state) });
+  const cambiarPrioridad = (t) =>
+    updateTask(t.id, { priority: cicloPrioridad(t.priority || "medium") });
+
+  // Due date
+  const abrirFecha = (task) => {
+    setSelectedTask(task);
+    const iso = task?.dueAt || task?.dueDate;
+    setDateTemp(iso ? new Date(iso) : new Date());
+    setDateModalOpen(true);
+  };
+  const cerrarFecha = () => { setSelectedTask(null); setDateModalOpen(false); };
+  const guardarFecha = () => {
+    if (selectedTask) updateTask(selectedTask.id, { dueAt: dateTemp.toISOString() });
+    cerrarFecha();
+  };
+  const limpiarFecha = (t) => updateTask(t.id, { dueAt: null, dueDate: null });
+
+  // Comentarios
+  const abrirComentarios = (task) => { setSelectedTask(task); setCommentsOpen(true); };
+  const cerrarComentarios = () => { setSelectedTask(null); setCommentsOpen(false); };
+  const enviarComentario = (texto) => {
+    if (addComment) {
+      addComment(selectedTask.id, texto);
+    } else {
+      console.warn("Implementa addComment(taskId, text) en tu store.");
+    }
+  };
+  const comentariosSeleccionada = selectedTask
+    ? state.comments.filter((c) => c.taskId === selectedTask.id)
+    : [];
 
   return (
-    <View className="flex-1 bg-white p-4">
-      <Text className="text-xl font-bold mb-3">Project · {project?.name ?? "…"}</Text>
+    <View className="flex-1 bg-white p-5">
+      <Text className="text-2xl font-bold mb-4">
+        Proyecto · {project?.name ?? "…"}
+      </Text>
 
-      {/* Modo de vista + Crear rápida */}
-      <View className="flex-row gap-2 mb-2">
-        {["table","kanban","list"].map(m => (
+      {/* Modo de vista + Crear rápida (ligeramente más grande) */}
+      <View className="flex-row gap-3 mb-3">
+        {["table", "kanban", "list"].map((m) => (
           <TouchableOpacity
             key={m}
-            onPress={() => setMode(m)}
-            className={`px-3 py-2 rounded-xl ${mode===m?'bg-black':'bg-gray-200'}`}
+            onPress={() => setModo(m)}
+            className={`px-4 py-3 rounded-2xl ${modo === m ? "bg-black" : "bg-gray-200"}`}
           >
-            <Text className={`${mode===m?'text-white':'text-black'}`}>
-              {m === "table" ? "Table" : m === "kanban" ? "Board" : "List"}
+            <Text className={`${modo === m ? "text-white" : "text-black"} text-base`}>
+              {m === "table" ? "Tabla" : m === "kanban" ? "Tablero" : "Lista"}
             </Text>
           </TouchableOpacity>
         ))}
         <TouchableOpacity
-          onPress={() => createQuick()}
+          onPress={() => crearRapida()}
           disabled={!project}
-          className={`px-3 py-2 rounded-xl ${project?'bg-emerald-600':'bg-emerald-300'}`}
+          className={`px-4 py-3 rounded-2xl ${project ? "bg-emerald-600" : "bg-emerald-300"}`}
         >
-          <Text className="text-white">+ Task</Text>
+          <Text className="text-white text-base">+ Tarea</Text>
         </TouchableOpacity>
       </View>
-
-      {/* Filtros */}
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} className="mb-2">
-        <View className="flex-row gap-2">
-          {STATES.map(s => (
-            <TouchableOpacity
-              key={s}
-              onPress={() => setFilter(s)}
-              className={`px-3 py-2 rounded-xl ${filter===s?'bg-gray-900':'bg-gray-200'}`}
-            >
-              <Text className={`${filter===s?'text-white':'text-black'}`}>
-                {s === "all" ? "All" :
-                 s === "todo" ? "To do" :
-                 s === "in_progress" ? "In progress" :
-                 s === "done" ? "Done" : "Late"}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </ScrollView>
 
       {/* Búsqueda */}
       <SearchBar value={q} onChange={setQ} />
@@ -118,60 +145,93 @@ export default function Projects() {
       {/* Contenido */}
       {!project ? (
         <View className="flex-1 items-center justify-center">
-          <Text className="opacity-60">Creando proyecto inicial…</Text>
+          <Text className="opacity-60 text-base">Creando proyecto inicial…</Text>
         </View>
       ) : tasks.length === 0 ? (
         <View className="flex-1 items-center justify-center">
-          <Text className="opacity-60">Sin tareas. Agrega una en “+ Task”.</Text>
+          <Text className="opacity-60 text-base">Sin tareas. Agrega una en “+ Tarea”.</Text>
         </View>
-      ) : mode === "table" ? (
+      ) : modo === "table" ? (
         <TaskTable
           tasks={tasks}
           members={members}
-          onAdd={(title) => createQuick(title)}
-          onOpen={(t) => toggleTask(t)}
-          onToggle={(t) => toggleTask(t)}
+          onAdd={(title) => crearRapida(title)}
+          onOpen={(t) => { /* abrir detalle opcional */ }}
+          onToggle={(t) => cambiarEstado(t)}            // estado
           onDelete={(id) => removeTask(id)}
+          onSetDueDate={(t) => abrirFecha(t)}           // calendario
+          onClearDueDate={(t) => limpiarFecha(t)}       // limpiar fecha
+          onTogglePriority={(t) => cambiarPrioridad(t)} // prioridad
+          onOpenComments={(t) => abrirComentarios(t)}   // 💬
+          // <<< NUEVO: pide a la tabla que agrupe por estado y use etiquetas en español
+          groupByState
+          locale="es"
         />
-      ) : mode === "list" ? (
+      ) : modo === "list" ? (
         <ScrollView>
           {tasks.map((t) => (
-            <View key={t.id} className="flex-row items-center gap-2">
-              <TaskCard task={t} onPress={() => toggleTask(t)} />
-              <TouchableOpacity
-                onPress={() => removeTask(t.id)}
-                className="px-2 py-2 rounded bg-red-500"
-              >
-                <Text className="text-white">Eliminar</Text>
+            <View key={t.id} className="flex-row items-center gap-3">
+              <TaskCard task={t} onPress={() => { /* abrir detalle opcional */ }} />
+              <TouchableOpacity onPress={() => abrirFecha(t)} className="px-3 py-2 rounded-xl bg-gray-800">
+                <Text className="text-white text-base">📅 Fecha</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => abrirComentarios(t)} className="px-3 py-2 rounded-xl bg-gray-200">
+                <Text className="text-base">💬</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => removeTask(t.id)} className="px-3 py-2 rounded-xl bg-red-500">
+                <Text className="text-white text-base">Eliminar</Text>
               </TouchableOpacity>
             </View>
           ))}
         </ScrollView>
       ) : (
         <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+          {/* Tablero (sigue igual) */}
           <KanbanColumn
-            title="To do"
+            title="Por hacer"
             tasks={tasks.filter((t) => t.state === "todo")}
-            onOpen={(t) => move(t, "in_progress")}
+            onOpen={(t) => updateTask(t.id, { state: "in_progress" })}
+            onSetDueDate={(t) => abrirFecha(t)}
           />
           <KanbanColumn
-            title="In progress"
+            title="En progreso"
             tasks={tasks.filter((t) => t.state === "in_progress")}
-            onOpen={(t) => move(t, "done")}
+            onOpen={(t) => updateTask(t.id, { state: "done" })}
+            onSetDueDate={(t) => abrirFecha(t)}
           />
           <KanbanColumn
-            title="Done"
+            title="Hechas"
             tasks={tasks.filter((t) => t.state === "done")}
-            onOpen={(t) => move(t, "late")}
+            onOpen={(t) => updateTask(t.id, { state: "late" })}
+            onSetDueDate={(t) => abrirFecha(t)}
           />
           <KanbanColumn
-            title="Late"
+            title="Tardías"
             tasks={tasks.filter((t) => t.state === "late")}
-            onOpen={(t) => move(t, "todo")}
+            onOpen={(t) => updateTask(t.id, { state: "todo" })}
+            onSetDueDate={(t) => abrirFecha(t)}
           />
         </ScrollView>
       )}
+
+      {/* Modal: fecha */}
+      <DueDateModal
+        open={dateModalOpen}
+        taskTitle={selectedTask?.title}
+        value={dateTemp}
+        onChange={setDateTemp}
+        onCancel={cerrarFecha}
+        onSave={guardarFecha}
+      />
+
+      {/* Modal: comentarios */}
+      <CommentsModal
+        open={commentsOpen}
+        taskTitle={selectedTask?.title}
+        comments={comentariosSeleccionada}
+        onClose={cerrarComentarios}
+        onSubmit={enviarComentario}
+      />
     </View>
   );
 }
-
