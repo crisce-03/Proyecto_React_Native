@@ -1,3 +1,19 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+html, body, #root {
+  height: 100%;
+}
+
+html {
+  /* fuerza que el navegador reserve espacio para la barra */
+  overflow-y: scroll;
+}
+
+/* Si en algún momento ocultaste scrollbars, elimínalo.
+   Si quieres personalizarlas, usa algo así: */
+* { scrollbar-width: thin; scrollbar-color: #c7c7c7 transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: #c7c7c7; border-radius: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }

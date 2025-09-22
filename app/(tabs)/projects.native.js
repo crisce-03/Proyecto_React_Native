@@ -1,22 +1,19 @@
-// app/tabs/projects.js
-import { useEffect, useMemo, useState, useCallback } from "react";
+// app/tabs/projects.native.js
+import { useEffect, useMemo, useState } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   ScrollView,
   SafeAreaView,
-  StatusBar,
-  Platform,
-  KeyboardAvoidingView,
-  RefreshControl,
-  useWindowDimensions,
+  TextInput,
+  StyleSheet,
 } from "react-native";
 import { useApp } from "../../contexts/AppProvider";
 import SearchBar from "../../components/SearchBar";
 import KanbanColumn from "../../components/KanbanColum";
 import TaskCard from "../../components/TaskCard";
-import TaskTable from "../../components/TaskTable";
+import TaskTable from "../../components/TaskTable"; // puedes no usarlo; dejamos import por compat
 import DueDateModal from "../../components/DueDateModal";
 import CommentsModal from "../../components/CommentsModal";
 import "../../global.css";
@@ -29,23 +26,22 @@ export default function Projects() {
     createTask,
     updateTask,
     removeTask,
-    addComment, // si no existe en tu store, ignora o ajusta la llamada de submitComment
+    addComment,
   } = useApp();
 
-  const [modo, setModo] = useState("table"); // "table" | "kanban" | "list"
+  // Arranca en Lista
+  const [modo, setModo] = useState("list");
   const [q, setQ] = useState("");
-  const [refreshing, setRefreshing] = useState(false);
 
-  // Modal de fecha
-  const [dateModalOpen, setDateModalOpen] = useState(false);
+  // Modales
+  const [dateOpen, setDateOpen] = useState(false);
   const [dateTemp, setDateTemp] = useState(new Date());
+  const [commentsOpen, setCommentsOpen] = useState(false);
   const [selectedTask, setSelectedTask] = useState(null);
 
-  // Modal de comentarios
-  const [commentsOpen, setCommentsOpen] = useState(false);
-
-  const { width } = useWindowDimensions();
-  const isCompact = width < 720; // afinado para móvil
+  // === Selección para tablero (Kanban) ===
+  const [selectedId, setSelectedId] = useState(null);
+  const [selectedTaskState, setSelectedTaskState] = useState(null);
 
   useEffect(() => {
     if (!state.workspaces.length) {
@@ -60,15 +56,9 @@ export default function Projects() {
   const ws = state.workspaces[0];
   const project = state.projects.find((p) => p.workspaceId === ws?.id);
 
-  const members = ws?.members ?? [];
-  const allTasks = useMemo(() => {
+  const tasks = useMemo(() => {
     if (!project) return [];
-    let arr = state.tasks
-      .filter((t) => t.projectId === project.id)
-      .map((t) => ({
-        ...t,
-        _commentsCount: state.comments.filter((c) => c.taskId === t.id).length,
-      }));
+    let arr = state.tasks.filter((t) => t.projectId === project.id);
     if (q) {
       const needle = q.toLowerCase();
       arr = arr.filter(
@@ -76,273 +66,410 @@ export default function Projects() {
       );
     }
     return arr;
-  }, [state.tasks, state.comments, project?.id, q]);
+  }, [state.tasks, project?.id, q]);
 
-  // Contadores por estado (para las pestañas)
-  const counts = useMemo(() => {
-    const base = { todo: 0, in_progress: 0, done: 0, late: 0, total: 0 };
-    for (const t of allTasks) {
-      base.total += 1;
-      if (base[t.state] !== undefined) base[t.state] += 1;
-    }
-    return base;
-  }, [allTasks]);
-
-  const crearRapida = (titulo = "Nueva tarea") => {
-    if (!project) return;
-    createTask(project.id, titulo);
-  };
-
-  // Estado y prioridad
-  const cicloEstado = (s) =>
-    s === "todo"
-      ? "in_progress"
-      : s === "in_progress"
-      ? "done"
-      : s === "done"
-      ? "late"
-      : "todo";
-
-  const cicloPrioridad = (p) =>
+  // Helpers de prioridad/estado (mismo flujo que web)
+  const cyclePriority = (p) =>
     p === "low" ? "medium" : p === "medium" ? "high" : p === "high" ? "urgent" : "low";
 
-  const cambiarEstado = (t) => updateTask(t.id, { state: cicloEstado(t.state) });
-  const cambiarPrioridad = (t) => updateTask(t.id, { priority: cicloPrioridad(t.priority || "medium") });
+  const cycleState = (s) =>
+    s === "todo" ? "in_progress" : s === "in_progress" ? "done" : s === "done" ? "late" : "todo";
 
-  // Due date
-  const abrirFecha = (task) => {
-    setSelectedTask(task);
-    const iso = task?.dueAt || task?.dueDate;
-    setDateTemp(iso ? new Date(iso) : new Date());
-    setDateModalOpen(true);
-  };
-  const cerrarFecha = () => {
-    setSelectedTask(null);
-    setDateModalOpen(false);
-  };
-  const guardarFecha = () => {
-    if (selectedTask) updateTask(selectedTask.id, { dueAt: dateTemp.toISOString() });
-    cerrarFecha();
-  };
-  const limpiarFecha = (t) => updateTask(t.id, { dueAt: null, dueDate: null });
-
-  // Comentarios
-  const abrirComentarios = (task) => {
-    setSelectedTask(task);
-    setCommentsOpen(true);
-  };
-  const cerrarComentarios = () => {
-    setSelectedTask(null);
-    setCommentsOpen(false);
-  };
-  const enviarComentario = (texto) => {
-    if (addComment) {
-      addComment(selectedTask.id, texto);
-    } else {
-      console.warn("Implementa addComment(taskId, text) en tu store.");
-    }
+  // === Handlers Kanban ===
+  const handleSelectTask = (t) => {
+    setSelectedId(t.id);
+    setSelectedTaskState(t.state);
   };
 
-  const comentariosSeleccionada = selectedTask
-    ? state.comments.filter((c) => c.taskId === selectedTask.id)
-    : [];
+  const handleDropSelected = (newColumnId) => {
+    if (!selectedId) return;
+    updateTask(selectedId, { state: newColumnId });
+    setSelectedId(null);
+    setSelectedTaskState(null);
+  };
 
-  // Pull-to-refresh (si tienes una acción de recarga real, reemplázala aquí)
-  const onRefresh = useCallback(() => {
-    setRefreshing(true);
-    // simula breve refresco de UI/estado
-    setTimeout(() => setRefreshing(false), 500);
-  }, []);
-
-  // Botón de modo (segmented) con contadores y mejor touch target
-  const ModeButton = ({ id, label, badge }) => (
-    <TouchableOpacity
-      onPress={() => setModo(id)}
-      className={`px-4 py-2.5 rounded-2xl border ${
-        modo === id ? "bg-black border-black" : "bg-white border-gray-300"
-      } shadow-sm`}
-      activeOpacity={0.9}
-    >
-      <View className="flex-row items-center gap-2">
-        <Text className={`${modo === id ? "text-white" : "text-black"} text-base`}>
-          {label}
-        </Text>
-        {typeof badge === "number" && (
-          <View
-            className={`px-2 py-0.5 rounded-full ${
-              modo === id ? "bg-white/15" : "bg-gray-100"
-            }`}
-          >
-            <Text className={`${modo === id ? "text-white" : "text-gray-700"} text-xs`}>
-              {badge}
-            </Text>
-          </View>
-        )}
-      </View>
-    </TouchableOpacity>
-  );
-
-  // Contenido principal (se usa RefreshControl en cada modo)
-  const renderTabla = () => (
-    <TaskTable
-      tasks={allTasks}
-      members={members}
-      onAdd={(title) => crearRapida(title)}
-      onOpen={(t) => {
-        // abrir detalle opcional
-      }}
-      onToggle={(t) => cambiarEstado(t)} // estado
-      onDelete={(id) => removeTask(id)}
-      onSetDueDate={(t) => abrirFecha(t)} // calendario
-      onClearDueDate={(t) => limpiarFecha(t)} // limpiar fecha
-      onTogglePriority={(t) => cambiarPrioridad(t)} // prioridad
-      onOpenComments={(t) => abrirComentarios(t)} // 💬
-      groupByState
-    />
-  );
-
-  const renderLista = () => (
-    <View>
-      {allTasks.map((t) => (
-        <View key={t.id} className="flex-row items-center gap-3 mb-2">
-          <TaskCard task={t} onPress={() => { /* abrir detalle opcional */ }} />
-          <TouchableOpacity onPress={() => abrirFecha(t)} className="px-3 py-2 rounded-xl bg-gray-800">
-            <Text className="text-white text-base">📅 Fecha</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => abrirComentarios(t)} className="px-3 py-2 rounded-xl bg-gray-200">
-            <Text className="text-base">💬</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => removeTask(t.id)} className="px-3 py-2 rounded-xl bg-red-500">
-            <Text className="text-white text-base">Eliminar</Text>
-          </TouchableOpacity>
-        </View>
-      ))}
+  // === Tabla estilo "cards" con acciones inline ===
+  const Pill = ({ text, tone = "gray" }) => (
+    <View style={[styles.pill, pillTones[tone]]}>
+      <Text style={[styles.pillText, pillTextTones[tone]]}>{text}</Text>
     </View>
   );
 
-  const renderKanban = () => (
-    <ScrollView
-      horizontal
-      showsHorizontalScrollIndicator={false}
-      // hace un scroll más “snap” en móvil
-      snapToAlignment="start"
-      decelerationRate="fast"
-      contentContainerStyle={{ paddingRight: 8 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-    >
-      <KanbanColumn
-        title={`Por hacer (${counts.todo})`}
-        tasks={allTasks.filter((t) => t.state === "todo")}
-        onOpen={(t) => updateTask(t.id, { state: "in_progress" })}
-        onSetDueDate={(t) => abrirFecha(t)}
-      />
-      <KanbanColumn
-        title={`En progreso (${counts.in_progress})`}
-        tasks={allTasks.filter((t) => t.state === "in_progress")}
-        onOpen={(t) => updateTask(t.id, { state: "done" })}
-        onSetDueDate={(t) => abrirFecha(t)}
-      />
-      <KanbanColumn
-        title={`Hechas (${counts.done})`}
-        tasks={allTasks.filter((t) => t.state === "done")}
-        onOpen={(t) => updateTask(t.id, { state: "late" })}
-        onSetDueDate={(t) => abrirFecha(t)}
-      />
-      <KanbanColumn
-        title={`Tardías (${counts.late})`}
-        tasks={allTasks.filter((t) => t.state === "late")}
-        onOpen={(t) => updateTask(t.id, { state: "todo" })}
-        onSetDueDate={(t) => abrirFecha(t)}
-      />
-    </ScrollView>
-  );
+  const Row = ({ t }) => {
+    const commentsCount = state.comments.filter((c) => c.taskId === t.id).length;
+
+    return (
+      <View style={styles.rowCard}>
+        {/* Header fila: título + id + acciones derecha */}
+        <View style={styles.rowTop}>
+          <View>
+            <Text style={styles.rowTitle}>{t.title}</Text>
+            <Text style={styles.rowSub}>ID: {t.id}</Text>
+          </View>
+
+          <View style={styles.rowActionsRight}>
+            <TouchableOpacity
+              onPress={() => {
+                setSelectedTask(t);
+                setCommentsOpen(true);
+              }}
+              style={styles.iconBtnGray}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.iconText}>💬</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              onPress={() => removeTask(t.id)}
+              style={styles.deleteBtn}
+              activeOpacity={0.85}
+            >
+              <Text style={{ color: "#fff", fontWeight: "700" }}>Eliminar</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* Línea de propiedades */}
+        <View style={styles.propRow}>
+          <Text style={styles.propLabel}>Asignado</Text>
+          <Text style={styles.propDash}>—</Text>
+
+          <Text style={[styles.propLabel, { marginLeft: 16 }]}>Fecha</Text>
+          <TouchableOpacity
+            onPress={() => {
+              setSelectedTask(t);
+              const iso = t?.dueAt || t?.dueDate;
+              setDateTemp(iso ? new Date(iso) : new Date());
+              setDateOpen(true);
+            }}
+            style={styles.iconBtnDark}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.iconTextLight}>📅</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={[styles.propRow, { marginTop: 6 }]}>
+          <Text style={styles.propLabel}>Prioridad</Text>
+          <TouchableOpacity
+            onPress={() => updateTask(t.id, { priority: cyclePriority(t.priority || "medium") })}
+            activeOpacity={0.9}
+          >
+            <Pill
+              text={(t.priority || "medium").toUpperCase()}
+              tone={
+                (t.priority || "medium") === "low"
+                  ? "gray"
+                  : (t.priority || "medium") === "medium"
+                  ? "amber"
+                  : (t.priority || "medium") === "high"
+                  ? "green"
+                  : "red"
+              }
+            />
+          </TouchableOpacity>
+
+          <Text style={[styles.propLabel, { marginLeft: 16 }]}>Estado</Text>
+          <TouchableOpacity
+            onPress={() => updateTask(t.id, { state: cycleState(t.state) })}
+            activeOpacity={0.9}
+          >
+            <Pill
+              text={
+                t.state === "todo"
+                  ? "POR HACER"
+                  : t.state === "in_progress"
+                  ? "EN PROGRESO"
+                  : t.state === "done"
+                  ? "HECHA"
+                  : "TARDÍA"
+              }
+              tone={t.state === "done" ? "green" : t.state === "late" ? "red" : "gray"}
+            />
+          </TouchableOpacity>
+
+          <Text style={[styles.propLabel, { marginLeft: 16 }]}>Comentarios</Text>
+          <Text style={styles.propValue}>{commentsCount}</Text>
+        </View>
+      </View>
+    );
+  };
+
+  const Section = ({ title, data, onQuickAdd }) => {
+    const [titleDraft, setTitleDraft] = useState("");
+    return (
+      <View style={{ marginBottom: 20 }}>
+        <Text style={styles.sectionTitle}>{title}</Text>
+
+        {data.map((t) => (
+          <Row key={t.id} t={t} />
+        ))}
+
+        {/* Agregar rápida */}
+        <View style={styles.addRow}>
+          <TextInput
+            value={titleDraft}
+            onChangeText={setTitleDraft}
+            placeholder="Agregar tarea"
+            style={styles.input}
+            placeholderTextColor="#9ca3af"
+          />
+          <TouchableOpacity
+            onPress={() => {
+              if (!titleDraft.trim()) return;
+              onQuickAdd(titleDraft.trim());
+              setTitleDraft("");
+            }}
+            style={styles.addBtn}
+            activeOpacity={0.9}
+          >
+            <Text style={{ color: "#fff", fontWeight: "700" }}>Agregar</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  const renderTablaLikeCards = () => {
+    const groups = {
+      todo: tasks.filter((t) => t.state === "todo"),
+      in_progress: tasks.filter((t) => t.state === "in_progress"),
+      done: tasks.filter((t) => t.state === "done"),
+      late: tasks.filter((t) => t.state === "late"),
+    };
+
+    return (
+      <ScrollView>
+        <Section
+          title="Por hacer"
+          data={groups.todo}
+          onQuickAdd={(title) => project && createTask(project.id, title)}
+        />
+        <Section
+          title="En progreso"
+          data={groups.in_progress}
+          onQuickAdd={(title) => project && createTask(project.id, title)}
+        />
+        <Section
+          title="Hechas"
+          data={groups.done}
+          onQuickAdd={(title) => project && createTask(project.id, title)}
+        />
+        <Section
+          title="Tardías"
+          data={groups.late}
+          onQuickAdd={(title) => project && createTask(project.id, title)}
+        />
+      </ScrollView>
+    );
+  };
 
   return (
     <SafeAreaView className="flex-1 bg-white">
-      <StatusBar barStyle={Platform.OS === "ios" ? "dark-content" : "dark-content"} backgroundColor="#ffffff" />
-      <KeyboardAvoidingView
-        className="flex-1"
-        behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 12 : 0}
-      >
-        <View className="flex-1 p-4">
-          {/* Título */}
-          <Text className="text-xl font-bold mb-3">
-            Proyecto · {project?.name ?? "…"}
-          </Text>
+      <View className="p-4">
+        <Text className="text-xl font-bold mb-3">
+          Proyecto · {project?.name ?? "…"}
+        </Text>
 
-          {/* Tabs responsivas con contadores */}
-          <View className="flex-row flex-wrap gap-2 mb-3">
-            <ModeButton id="table" label="Tabla" badge={counts.total} />
-            <ModeButton id="kanban" label="Tablero" badge={counts.in_progress + counts.todo + counts.late} />
-            <ModeButton id="list" label="Lista" badge={counts.total} />
-          </View>
-
-          {/* Búsqueda */}
-          <View className="mb-2">
-            <SearchBar value={q} onChange={setQ} />
-          </View>
-
-          {/* Contenido con pull-to-refresh */}
-          {!project ? (
-            <View className="flex-1 items-center justify-center">
-              <Text className="opacity-60 text-base">Creando proyecto inicial…</Text>
-            </View>
-          ) : allTasks.length === 0 ? (
-            <ScrollView
-              refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-              contentContainerStyle={{ flex: 1, alignItems: "center", justifyContent: "center" }}
-            >
-              <Text className="opacity-60 text-base">Sin tareas. Agrega una con “+”.</Text>
-            </ScrollView>
-          ) : modo === "table" ? (
-            <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
-              {renderTabla()}
-            </ScrollView>
-          ) : modo === "list" ? (
-            <ScrollView refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
-              {renderLista()}
-            </ScrollView>
-          ) : (
-            renderKanban()
-          )}
-
-          {/* FAB: + Tarea (mejor reachability en móvil) */}
-          {project && (
+        {/* Tabs (sin whiteboard) */}
+        <View className="flex-row gap-2 mb-3">
+          {["table", "kanban", "list"].map((m) => (
             <TouchableOpacity
-              onPress={() => crearRapida()}
-              activeOpacity={0.9}
-              className="absolute right-4 bottom-4 bg-emerald-600 rounded-full shadow-lg"
-              style={{
-                paddingHorizontal: 20,
-                paddingVertical: 14,
-                elevation: 5, // Android shadow
-              }}
+              key={m}
+              onPress={() => setModo(m)}
+              className={`px-4 py-2 rounded-2xl ${
+                modo === m ? "bg-black" : "bg-gray-200"
+              }`}
             >
-              <Text className="text-white text-base font-semibold">＋ Tarea</Text>
+              <Text className={modo === m ? "text-white" : "text-black"}>
+                {m === "table" ? "Tabla" : m === "kanban" ? "Tablero" : "Lista"}
+              </Text>
             </TouchableOpacity>
-          )}
+          ))}
+          <TouchableOpacity
+            onPress={() => project && createTask(project.id, "Nueva tarea")}
+            disabled={!project}
+            className={`px-4 py-2 rounded-2xl ${
+              project ? "bg-emerald-600" : "bg-emerald-300"
+            }`}
+          >
+            <Text className="text-white">+ Tarea</Text>
+          </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
 
-      {/* Modal: fecha */}
+        <SearchBar value={q} onChange={setQ} />
+
+        {/* Contenido */}
+        {modo === "table" ? (
+          renderTablaLikeCards()
+        ) : modo === "list" ? (
+          <ScrollView>
+            {tasks.map((t) => (
+              <TaskCard key={t.id} task={t} />
+            ))}
+          </ScrollView>
+        ) : (
+          <ScrollView horizontal>
+            <KanbanColumn
+              columnId="todo"
+              title="Por hacer"
+              tasks={tasks.filter((t) => t.state === "todo")}
+              selectedId={selectedId}
+              selectedTaskState={selectedTaskState}
+              onSelectTask={handleSelectTask}
+              onDropSelected={handleDropSelected}
+            />
+            <KanbanColumn
+              columnId="in_progress"
+              title="En progreso"
+              tasks={tasks.filter((t) => t.state === "in_progress")}
+              selectedId={selectedId}
+              selectedTaskState={selectedTaskState}
+              onSelectTask={handleSelectTask}
+              onDropSelected={handleDropSelected}
+            />
+            <KanbanColumn
+              columnId="done"
+              title="Hechas"
+              tasks={tasks.filter((t) => t.state === "done")}
+              selectedId={selectedId}
+              selectedTaskState={selectedTaskState}
+              onSelectTask={handleSelectTask}
+              onDropSelected={handleDropSelected}
+            />
+            <KanbanColumn
+              columnId="late"
+              title="Tardías"
+              tasks={tasks.filter((t) => t.state === "late")}
+              selectedId={selectedId}
+              selectedTaskState={selectedTaskState}
+              onSelectTask={handleSelectTask}
+              onDropSelected={handleDropSelected}
+            />
+          </ScrollView>
+        )}
+      </View>
+
+      {/* Modales */}
       <DueDateModal
-        open={dateModalOpen}
+        open={dateOpen}
         taskTitle={selectedTask?.title}
         value={dateTemp}
         onChange={setDateTemp}
-        onCancel={cerrarFecha}
-        onSave={guardarFecha}
+        onCancel={() => {
+          setSelectedTask(null);
+          setDateOpen(false);
+        }}
+        onSave={() => {
+          if (selectedTask) {
+            updateTask(selectedTask.id, { dueAt: dateTemp.toISOString() });
+          }
+          setSelectedTask(null);
+          setDateOpen(false);
+        }}
       />
-
-      {/* Modal: comentarios */}
       <CommentsModal
         open={commentsOpen}
         taskTitle={selectedTask?.title}
-        comments={comentariosSeleccionada}
-        onClose={cerrarComentarios}
-        onSubmit={enviarComentario}
+        comments={
+          selectedTask
+            ? state.comments.filter((c) => c.taskId === selectedTask.id)
+            : []
+        }
+        onClose={() => {
+          setSelectedTask(null);
+          setCommentsOpen(false);
+        }}
+        onSubmit={(text) => {
+          if (selectedTask && text?.trim()) addComment(selectedTask.id, text.trim());
+        }}
       />
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  rowCard: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: "#e5e7eb",
+    padding: 12,
+    marginBottom: 12,
+  },
+  rowTop: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 6,
+  },
+  rowTitle: { fontWeight: "700", fontSize: 16 },
+  rowSub: { color: "#6b7280", fontSize: 12 },
+  rowActionsRight: { flexDirection: "row", gap: 8, alignItems: "center" },
+  iconBtnGray: {
+    backgroundColor: "#f3f4f6",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  iconBtnDark: {
+    backgroundColor: "#111827",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    marginLeft: 8,
+  },
+  iconText: { fontSize: 14 },
+  iconTextLight: { fontSize: 14, color: "#fff" },
+  deleteBtn: {
+    backgroundColor: "#ef4444",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  propRow: { flexDirection: "row", alignItems: "center" },
+  propLabel: { color: "#6b7280", marginRight: 6 },
+  propDash: { color: "#6b7280" },
+  propValue: { color: "#111827", fontWeight: "600" },
+  sectionTitle: { fontWeight: "700", marginTop: 16, marginBottom: 8 },
+  addRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    marginTop: 8,
+  },
+  input: {
+    flex: 1,
+    backgroundColor: "#f3f4f6",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: "#111827",
+  },
+  addBtn: {
+    backgroundColor: "#10b981",
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 12,
+  },
+  pill: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    alignSelf: "flex-start",
+  },
+  pillText: { fontSize: 12, fontWeight: "700" },
+});
+
+const pillTones = {
+  gray: { backgroundColor: "#f3f4f6" },
+  amber: { backgroundColor: "#fef3c7" },
+  green: { backgroundColor: "#dcfce7" },
+  red: { backgroundColor: "#fee2e2" },
+};
+const pillTextTones = {
+  gray: { color: "#111827" },
+  amber: { color: "#92400e" },
+  green: { color: "#065f46" },
+  red: { color: "#991b1b" },
+};

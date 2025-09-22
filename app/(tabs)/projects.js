@@ -1,3 +1,4 @@
+// app/tabs/projects.js
 import { Platform } from "react-native";
 import ProjectsNative from "./projects.native";
 import ProjectsWeb from "./projects.web";
