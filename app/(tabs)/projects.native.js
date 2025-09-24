@@ -16,6 +16,10 @@ import TaskCard from "../../components/TaskCard";
 import TaskTable from "../../components/TaskTable"; // puedes no usarlo; dejamos import por compat
 import DueDateModal from "../../components/DueDateModal";
 import CommentsModal from "../../components/CommentsModal";
+// ⬇️ importa el Sidebar (asegúrate de tener Sidebar.native.jsx)
+//    NO pongas sufijo; Metro elegirá el .native.jsx automáticamente.
+import Sidebar from "../../components/Sidebar";
+
 import "../../global.css";
 
 export default function Projects() {
@@ -43,18 +47,46 @@ export default function Projects() {
   const [selectedId, setSelectedId] = useState(null);
   const [selectedTaskState, setSelectedTaskState] = useState(null);
 
+  // === Sidebar full-screen ===
+  const [showSelector, setShowSelector] = useState(true);
+  const [activeWsId, setActiveWsId] = useState(null);
+  const [activeProjectId, setActiveProjectId] = useState(null);
+
+  // Bootstrap mínimo (crear 1er workspace/proyecto si no existen)
   useEffect(() => {
     if (!state.workspaces.length) {
-      createWorkspace("Team Space");
+      const ws = createWorkspace("Team Space");
+      setActiveWsId(ws?.id);
       return;
     }
     const ws0 = state.workspaces[0];
     const hasProject = state.projects.some((p) => p.workspaceId === ws0.id);
-    if (!hasProject) createProject(ws0.id, "Proyecto 1");
+    if (!hasProject) {
+      const pr = createProject(ws0.id, "Proyecto 1");
+      setActiveWsId(ws0.id);
+      setActiveProjectId(pr?.id || null);
+    }
   }, [state.workspaces.length, state.projects.length]);
 
-  const ws = state.workspaces[0];
-  const project = state.projects.find((p) => p.workspaceId === ws?.id);
+  // Si no hay activo, tomar el primero disponible
+  useEffect(() => {
+    if (!activeWsId && state.workspaces[0]) setActiveWsId(state.workspaces[0].id);
+  }, [activeWsId, state.workspaces]);
+
+  const ws =
+    state.workspaces.find((w) => w.id === activeWsId) || state.workspaces[0];
+  const project =
+    state.projects.find((p) => p.id === activeProjectId) ||
+    state.projects.find((p) => p.workspaceId === ws?.id);
+
+  // Si cambia workspace, asegurar que el proyecto activo pertenezca
+  useEffect(() => {
+    if (!ws) return;
+    if (!project || project.workspaceId !== ws.id) {
+      const firstP = state.projects.find((p) => p.workspaceId === ws.id);
+      setActiveProjectId(firstP?.id || null);
+    }
+  }, [ws?.id]);
 
   const tasks = useMemo(() => {
     if (!project) return [];
@@ -86,6 +118,18 @@ export default function Projects() {
     updateTask(selectedId, { state: newColumnId });
     setSelectedId(null);
     setSelectedTaskState(null);
+  };
+
+  // === Sidebar handlers ===
+  const handleSelectWorkspace = (id) => {
+    setActiveWsId(id);
+    // al cambiar workspace, reseteamos proyecto activo; el effect lo ajustará al primero
+    setActiveProjectId(null);
+  };
+
+  const handleSelectProject = (id) => {
+    setActiveProjectId(id);
+    setShowSelector(false); // 👈 cerrar selector y mostrar panel
   };
 
   // === Tabla estilo "cards" con acciones inline ===
@@ -264,42 +308,71 @@ export default function Projects() {
     );
   };
 
+  // ⬇️ Si el selector está abierto, mostramos SOLO el Sidebar a pantalla completa
+  if (showSelector) {
+    return (
+      <SafeAreaView className="flex-1 bg-white">
+        <Sidebar
+          workspaces={state.workspaces}
+          projects={state.projects}
+          activeWsId={ws?.id}
+          activeProjectId={project?.id}
+          onSelectWorkspace={handleSelectWorkspace}
+          onSelectProject={handleSelectProject} // <- esto cierra el selector
+          // onOpenNewWorkspace / onOpenNewProject (opcionales si tus componentes los soportan)
+        />
+      </SafeAreaView>
+    );
+  }
+
+  // ⬇️ Vista de gestión (tu panel original), con header que reabre el selector
   return (
     <SafeAreaView className="flex-1 bg-white">
-      <View className="p-4">
-        <Text className="text-xl font-bold mb-3">
+      {/* Header con hamburguesa */}
+      <View className="px-4 pt-4 pb-2 flex-row items-center justify-between">
+        <TouchableOpacity
+          onPress={() => setShowSelector(true)}
+          className="px-3 py-2 rounded-xl bg-gray-900"
+        >
+          <Text className="text-white font-semibold">☰</Text>
+        </TouchableOpacity>
+        <Text className="text-xl font-bold">
           Proyecto · {project?.name ?? "…"}
         </Text>
+        <TouchableOpacity
+          onPress={() => project && createTask(project.id, "Nueva tarea")}
+          disabled={!project}
+          className={`px-3 py-2 rounded-xl ${
+            project ? "bg-emerald-600" : "bg-emerald-300"
+          }`}
+        >
+          <Text className="text-white font-semibold">+ Tarea</Text>
+        </TouchableOpacity>
+      </View>
 
-        {/* Tabs (sin whiteboard) */}
-        <View className="flex-row gap-2 mb-3">
-          {["table", "kanban", "list"].map((m) => (
-            <TouchableOpacity
-              key={m}
-              onPress={() => setModo(m)}
-              className={`px-4 py-2 rounded-2xl ${
-                modo === m ? "bg-black" : "bg-gray-200"
-              }`}
-            >
-              <Text className={modo === m ? "text-white" : "text-black"}>
-                {m === "table" ? "Tabla" : m === "kanban" ? "Tablero" : "Lista"}
-              </Text>
-            </TouchableOpacity>
-          ))}
+      {/* Tabs (sin whiteboard) */}
+      <View className="px-4 flex-row gap-2 mb-3">
+        {["table", "kanban", "list"].map((m) => (
           <TouchableOpacity
-            onPress={() => project && createTask(project.id, "Nueva tarea")}
-            disabled={!project}
+            key={m}
+            onPress={() => setModo(m)}
             className={`px-4 py-2 rounded-2xl ${
-              project ? "bg-emerald-600" : "bg-emerald-300"
+              modo === m ? "bg-black" : "bg-gray-200"
             }`}
           >
-            <Text className="text-white">+ Tarea</Text>
+            <Text className={modo === m ? "text-white" : "text-black"}>
+              {m === "table" ? "Tabla" : m === "kanban" ? "Tablero" : "Lista"}
+            </Text>
           </TouchableOpacity>
-        </View>
+        ))}
+      </View>
 
+      <View className="px-4">
         <SearchBar value={q} onChange={setQ} />
+      </View>
 
-        {/* Contenido */}
+      {/* Contenido */}
+      <View className="px-4 flex-1">
         {modo === "table" ? (
           renderTablaLikeCards()
         ) : modo === "list" ? (
