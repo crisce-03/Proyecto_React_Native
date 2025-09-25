@@ -1,30 +1,68 @@
 // app/tabs/index.native.js
-import { View, Text, TouchableOpacity } from "react-native";
-import { useApp } from "../../contexts/AppProvider";
+import React from "react";
+import {
+  SafeAreaView,
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+} from "react-native";
 import { useRouter } from "expo-router";
 
-export default function Home() {
-  const { state } = useApp();
+export default function HomeNative() {
   const router = useRouter();
-  const totalTasks = state.tasks.length;
-  const inProgress = state.tasks.filter((t) => t.state === "in_progress").length;
-  const late = state.tasks.filter((t) => t.state === "late").length;
 
   return (
-    <View className="flex-1 p-6 gap-4 bg-white">
-      <Text className="text-2xl font-bold">Hola {state.user?.name}</Text>
-      <Text className="text-base">
-        Tareas: {totalTasks} · En progreso: {inProgress} · Tardías: {late}
-      </Text>
-      <TouchableOpacity
-        onPress={() => router.push("/(tabs)/projects")}
-        className="bg-black px-4 py-3 rounded-xl"
-      >
-        <Text className="text-white text-center font-semibold">
-          Ir al Gestor de Proyectos
+    <SafeAreaView style={styles.screen}>
+      <View style={styles.container}>
+        {/* Hero */}
+        <Text style={styles.title}>TaskID</Text>
+        <Text style={styles.subtitle}>
+          Organiza workspaces, proyectos y tareas. (Demo solo frontend)
         </Text>
-      </TouchableOpacity>
-    </View>
+
+        {/* Único botón */}
+        <TouchableOpacity
+          onPress={() => router.push("/(tabs)/projects")}
+          activeOpacity={0.9}
+          style={styles.cta}
+        >
+          <Text style={styles.ctaText}>Ingresar al Gestor de Tareas →</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
   );
 }
 
+/* ---- Styles ---- */
+const styles = StyleSheet.create({
+  screen: { flex: 1, backgroundColor: "#f8fafc" },
+  container: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 20,
+  },
+  title: {
+    fontSize: 34,
+    fontWeight: "800",
+    color: "#0f172a",
+    textAlign: "center",
+  },
+  subtitle: {
+    marginTop: 8,
+    color: "#334155",
+    textAlign: "center",
+  },
+  cta: {
+    marginTop: 16,
+    backgroundColor: "#111827",
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderRadius: 16,
+    shadowColor: "#000",
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+  },
+  ctaText: { color: "#fff", fontWeight: "700" },
+});

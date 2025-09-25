@@ -1,5 +1,4 @@
-// app/tabs/projects.native.js
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -16,9 +15,10 @@ import TaskCard from "../../components/TaskCard";
 import TaskTable from "../../components/TaskTable"; // puedes no usarlo; dejamos import por compat
 import DueDateModal from "../../components/DueDateModal";
 import CommentsModal from "../../components/CommentsModal";
-// ⬇️ importa el Sidebar (asegúrate de tener Sidebar.native.jsx)
-//    NO pongas sufijo; Metro elegirá el .native.jsx automáticamente.
 import Sidebar from "../../components/Sidebar";
+
+import TaskCreateModal from "../../components/TaskCreateModal.native"; // ⬅️ NUEVO
+import TaskViewModal from "../../components/TaskViewModal.native";     // ⬅️ NUEVO
 
 import "../../global.css";
 
@@ -51,6 +51,12 @@ export default function Projects() {
   const [showSelector, setShowSelector] = useState(true);
   const [activeWsId, setActiveWsId] = useState(null);
   const [activeProjectId, setActiveProjectId] = useState(null);
+
+  // ⬇️ Estado más reciente para evitar closures viejos al crear/actualizar
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   // Bootstrap mínimo (crear 1er workspace/proyecto si no existen)
   useEffect(() => {
@@ -123,16 +129,81 @@ export default function Projects() {
   // === Sidebar handlers ===
   const handleSelectWorkspace = (id) => {
     setActiveWsId(id);
-    // al cambiar workspace, reseteamos proyecto activo; el effect lo ajustará al primero
     setActiveProjectId(null);
   };
 
   const handleSelectProject = (id) => {
     setActiveProjectId(id);
-    setShowSelector(false); // 👈 cerrar selector y mostrar panel
+    setShowSelector(false);
   };
 
-  // === Tabla estilo "cards" con acciones inline ===
+  // === Crear tarea (desde modal) — RESPETA los valores del formulario
+  const [createOpen, setCreateOpen] = useState(false); // ⬅️ NUEVO
+  const handleCreateTask = (payload) => {
+    if (!project) { setCreateOpen(false); return; }
+
+    const maybeId = createTask(project.id, payload.title);
+
+    const patch = {
+      state: payload.state,
+      priority: payload.priority,
+    };
+    if (payload.due) {
+      patch.dueAt = new Date(payload.due).toISOString();
+    }
+    if (payload.assignee) {
+      patch.assignedTo = payload.assignee;
+    }
+
+    if (maybeId) {
+      updateTask(maybeId, patch);
+      setCreateOpen(false);
+      return;
+    }
+
+    const prevIds = new Set(stateRef.current.tasks.map(t => t.id));
+    let tries = 0;
+    const MAX_TRIES = 20;
+
+    const findAndPatch = () => {
+      const s = stateRef.current;
+      const createdNow = s.tasks.filter(
+        t => t.projectId === project.id && !prevIds.has(t.id)
+      );
+      const candidate =
+        createdNow[0] ||
+        s.tasks
+          .filter(t => t.projectId === project.id && (t.title || "") === payload.title)
+          .slice(-1)[0];
+
+      if (candidate) {
+        updateTask(candidate.id, patch);
+        setCreateOpen(false);
+        return;
+      }
+      if (++tries < MAX_TRIES) {
+        requestAnimationFrame(findAndPatch);
+      } else {
+        setCreateOpen(false);
+      }
+    };
+
+    requestAnimationFrame(findAndPatch);
+  };
+
+  // === Ver tarea (solo lectura)
+  const [viewOpen, setViewOpen] = useState(false); // ⬅️ NUEVO
+  const [viewTask, setViewTask] = useState(null);  // ⬅️ NUEVO
+  const openView = (t) => {
+    const withCount = {
+      ...t,
+      _commentsCount: state.comments.filter((c) => c.taskId === t.id).length,
+    };
+    setViewTask(withCount);
+    setViewOpen(true);
+  };
+
+  // === Tabla estilo "cards" con acciones inline
   const Pill = ({ text, tone = "gray" }) => (
     <View style={[styles.pill, pillTones[tone]]}>
       <Text style={[styles.pillText, pillTextTones[tone]]}>{text}</Text>
@@ -141,6 +212,24 @@ export default function Projects() {
 
   const Row = ({ t }) => {
     const commentsCount = state.comments.filter((c) => c.taskId === t.id).length;
+    const dueRaw = t?.dueAt || t?.dueDate;
+    const dueText = dueRaw ? new Date(dueRaw).toLocaleDateString() : "—";
+    const priorityTone =
+      (t.priority || "medium") === "low"
+        ? "gray"
+        : (t.priority || "medium") === "medium"
+        ? "amber"
+        : (t.priority || "medium") === "high"
+        ? "green"
+        : "red";
+    const stateText =
+      t.state === "todo"
+        ? "POR HACER"
+        : t.state === "in_progress"
+        ? "EN PROGRESO"
+        : t.state === "done"
+        ? "HECHA"
+        : "TARDÍA";
 
     return (
       <View style={styles.rowCard}>
@@ -152,6 +241,14 @@ export default function Projects() {
           </View>
 
           <View style={styles.rowActionsRight}>
+            <TouchableOpacity
+              onPress={() => openView(t)} // ⬅️ Ver tarea
+              style={styles.iconBtnGray}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.iconText}>Ver</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               onPress={() => {
                 setSelectedTask(t);
@@ -176,7 +273,7 @@ export default function Projects() {
         {/* Línea de propiedades */}
         <View style={styles.propRow}>
           <Text style={styles.propLabel}>Asignado</Text>
-          <Text style={styles.propDash}>—</Text>
+          <Text style={styles.propValue}>{t.assignedTo || "—"}</Text>
 
           <Text style={[styles.propLabel, { marginLeft: 16 }]}>Fecha</Text>
           <TouchableOpacity
@@ -191,26 +288,20 @@ export default function Projects() {
           >
             <Text style={styles.iconTextLight}>📅</Text>
           </TouchableOpacity>
+          <Text style={[styles.propValue, { marginLeft: 6 }]}>{dueText}</Text>
         </View>
 
         <View style={[styles.propRow, { marginTop: 6 }]}>
           <Text style={styles.propLabel}>Prioridad</Text>
           <TouchableOpacity
-            onPress={() => updateTask(t.id, { priority: cyclePriority(t.priority || "medium") })}
+            onPress={() =>
+              updateTask(t.id, {
+                priority: cyclePriority(t.priority || "medium"),
+              })
+            }
             activeOpacity={0.9}
           >
-            <Pill
-              text={(t.priority || "medium").toUpperCase()}
-              tone={
-                (t.priority || "medium") === "low"
-                  ? "gray"
-                  : (t.priority || "medium") === "medium"
-                  ? "amber"
-                  : (t.priority || "medium") === "high"
-                  ? "green"
-                  : "red"
-              }
-            />
+            <Pill text={(t.priority || "medium").toUpperCase()} tone={priorityTone} />
           </TouchableOpacity>
 
           <Text style={[styles.propLabel, { marginLeft: 16 }]}>Estado</Text>
@@ -219,15 +310,7 @@ export default function Projects() {
             activeOpacity={0.9}
           >
             <Pill
-              text={
-                t.state === "todo"
-                  ? "POR HACER"
-                  : t.state === "in_progress"
-                  ? "EN PROGRESO"
-                  : t.state === "done"
-                  ? "HECHA"
-                  : "TARDÍA"
-              }
+              text={stateText}
               tone={t.state === "done" ? "green" : t.state === "late" ? "red" : "gray"}
             />
           </TouchableOpacity>
@@ -308,7 +391,7 @@ export default function Projects() {
     );
   };
 
-  // ⬇️ Si el selector está abierto, mostramos SOLO el Sidebar a pantalla completa
+  // Si el selector está abierto, mostramos SOLO el Sidebar a pantalla completa
   if (showSelector) {
     return (
       <SafeAreaView className="flex-1 bg-white">
@@ -318,17 +401,16 @@ export default function Projects() {
           activeWsId={ws?.id}
           activeProjectId={project?.id}
           onSelectWorkspace={handleSelectWorkspace}
-          onSelectProject={handleSelectProject} // <- esto cierra el selector
-          // onOpenNewWorkspace / onOpenNewProject (opcionales si tus componentes los soportan)
+          onSelectProject={handleSelectProject}
         />
       </SafeAreaView>
     );
   }
 
-  // ⬇️ Vista de gestión (tu panel original), con header que reabre el selector
+  // Vista de gestión
   return (
     <SafeAreaView className="flex-1 bg-white">
-      {/* Header con hamburguesa */}
+      {/* Header */}
       <View className="px-4 pt-4 pb-2 flex-row items-center justify-between">
         <TouchableOpacity
           onPress={() => setShowSelector(true)}
@@ -340,17 +422,18 @@ export default function Projects() {
           Proyecto · {project?.name ?? "…"}
         </Text>
         <TouchableOpacity
-          onPress={() => project && createTask(project.id, "Nueva tarea")}
+          onPress={() => setCreateOpen(true)}
           disabled={!project}
           className={`px-3 py-2 rounded-xl ${
             project ? "bg-emerald-600" : "bg-emerald-300"
           }`}
+          activeOpacity={0.85}
         >
           <Text className="text-white font-semibold">+ Tarea</Text>
         </TouchableOpacity>
       </View>
 
-      {/* Tabs (sin whiteboard) */}
+      {/* Tabs */}
       <View className="px-4 flex-row gap-2 mb-3">
         {["table", "kanban", "list"].map((m) => (
           <TouchableOpacity
@@ -378,7 +461,18 @@ export default function Projects() {
         ) : modo === "list" ? (
           <ScrollView>
             {tasks.map((t) => (
-              <TaskCard key={t.id} task={t} />
+              <View key={t.id} style={{ flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <View style={{ flex: 1 }}>
+                  <TaskCard task={t} />
+                </View>
+                <TouchableOpacity
+                  onPress={() => openView(t)}
+                  activeOpacity={0.85}
+                  style={{ backgroundColor: "#111827", paddingHorizontal: 12, paddingVertical: 10, borderRadius: 12 }}
+                >
+                  <Text style={{ color: "#fff", fontWeight: "700" }}>Ver</Text>
+                </TouchableOpacity>
+              </View>
             ))}
           </ScrollView>
         ) : (
@@ -423,7 +517,7 @@ export default function Projects() {
         )}
       </View>
 
-      {/* Modales */}
+      {/* Modales existentes */}
       <DueDateModal
         open={dateOpen}
         taskTitle={selectedTask?.title}
@@ -454,8 +548,21 @@ export default function Projects() {
           setCommentsOpen(false);
         }}
         onSubmit={(text) => {
-          if (selectedTask && text?.trim()) addComment(selectedTask.id, text.trim());
+          if (selectedTask && text?.trim())
+            addComment(selectedTask.id, text.trim());
         }}
+      />
+
+      {/* Nuevos modales */}
+      <TaskCreateModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onSubmit={handleCreateTask}
+      />
+      <TaskViewModal
+        open={viewOpen}
+        onClose={() => setViewOpen(false)}
+        task={viewTask}
       />
     </SafeAreaView>
   );
@@ -502,7 +609,6 @@ const styles = StyleSheet.create({
   },
   propRow: { flexDirection: "row", alignItems: "center" },
   propLabel: { color: "#6b7280", marginRight: 6 },
-  propDash: { color: "#6b7280" },
   propValue: { color: "#111827", fontWeight: "600" },
   sectionTitle: { fontWeight: "700", marginTop: 16, marginBottom: 8 },
   addRow: {
